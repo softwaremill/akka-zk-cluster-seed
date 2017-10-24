@@ -2,12 +2,13 @@ package akka.cluster.seed
 
 import akka.actor._
 import akka.cluster.Cluster
-import org.apache.curator.framework.CuratorFrameworkFactory
+import akka.event.LoggingAdapter
+import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.curator.framework.recipes.leader.LeaderLatch
 
 import scala.collection.immutable
-import org.apache.zookeeper.KeeperException.{ NoNodeException, NodeExistsException }
+import org.apache.zookeeper.KeeperException.{NoNodeException, NodeExistsException}
 
 import concurrent.duration._
 import scala.concurrent._
@@ -35,47 +36,24 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
   } else
     Cluster(system).selfAddress
 
-  private val client = {
-    val retryPolicy = new ExponentialBackoffRetry(1000, 3)
-    val connStr = settings.ZKUrl.replace("zk://", "")
-    val curatorBuilder = CuratorFrameworkFactory.builder()
-      .connectString(connStr)
-      .retryPolicy(retryPolicy)
+  private val client = new ZookeeperClient(settings, address, system.name, system.log)
 
-    settings.ZKAuthorization match {
-      case Some((scheme, auth)) => curatorBuilder.authorization(scheme, auth.getBytes)
-      case None =>
-    }
-
-    val client = curatorBuilder.build()
-
-    client.start()
-    client
-  }
-
-  val myId = s"${address.protocol}://${address.hostPort}"
-
-  val path = s"${settings.ZKPath}/${system.name}"
-
-  removeEphemeralNodes()
-
-  private val latch = new LeaderLatch(client, path, myId)
-  private var seedEntryAdded = false
 
   /**
     * Join or create a cluster using Zookeeper to handle
     */
   def join(): Unit = synchronized {
-    createPathIfNeeded()
-    latch.start()
-    seedEntryAdded = true
+    client.createPathIfNeeded()
+    client.start()
+    client.seedEntryAdded = true
+
     while (!tryJoin()) {
-      system.log.warning("component=zookeeper-cluster-seed at=try-join-failed id={}", myId)
+      system.log.warning("component=zookeeper-cluster-seed at=try-join-failed id={}", client.myId)
       Thread.sleep(1000)
     }
 
     clusterSystem.registerOnMemberRemoved {
-      removeSeedEntry()
+      client.removeSeedEntry()
     }
 
     system.registerOnTermination {
@@ -85,24 +63,15 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
     }
   }
 
-  def removeSeedEntry(): Unit = synchronized {
-    if (seedEntryAdded) {
-      ignoring(classOf[IllegalStateException]) {
-        latch.close()
-        seedEntryAdded = false
-      }
-    }
-  }
-
   private def tryJoin(): Boolean = {
-    val leadParticipant = latch.getLeader
+    val leadParticipant = client.latch.getLeader
     if (!leadParticipant.isLeader) false
-    else if (leadParticipant.getId == myId) {
-      system.log.warning("component=zookeeper-cluster-seed at=this-node-is-leader-seed id={}", myId)
+    else if (leadParticipant.getId == client.myId) {
+      system.log.warning("component=zookeeper-cluster-seed at=this-node-is-leader-seed id={}", client.myId)
       Cluster(system).join(address)
       true
     } else {
-      val seeds = latch.getParticipants.iterator().asScala.filterNot(_.getId == myId).map {
+      val seeds = client.latch.getParticipants.iterator().asScala.filterNot(_.getId == client.myId).map {
         node => AddressFromURIString(node.getId)
       }.toList
       system.log.warning("component=zookeeper-cluster-seed at=join-cluster seeds={}", seeds)
@@ -122,15 +91,41 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
     }
   }
 
-  private def createPathIfNeeded() {
-    Option(client.checkExists().forPath(path)).getOrElse {
-      try {
-        client.create().creatingParentsIfNeeded().forPath(path)
-      } catch {
-        case e: NodeExistsException => system.log.info("component=zookeeper-cluster-seed at=path-create-race-detected")
-      }
+}
+
+class ZookeeperClient(settings: ZookeeperClusterSeedSettings, address: Address, actorSystemName: String, log: LoggingAdapter) {
+
+  val retryPolicy = new ExponentialBackoffRetry(1000, 3)
+  val connStr = settings.ZKUrl.replace("zk://", "")
+  val curatorBuilder = CuratorFrameworkFactory.builder()
+    .connectString(connStr)
+    .retryPolicy(retryPolicy)
+
+    settings.ZKAuthorization match {
+      case Some ((scheme, auth) ) => curatorBuilder.authorization (scheme, auth.getBytes)
+      case None =>
     }
+
+  val client = curatorBuilder.build()
+
+  client.start()
+
+  val myId = s"${address.protocol}://${address.hostPort}"
+
+  val path = s"${settings.ZKPath}/${actorSystemName}"
+
+  removeEphemeralNodes()
+
+  val latch = new LeaderLatch(client, path, myId)
+  var seedEntryAdded = false
+
+  def start(): Unit = latch.start()
+
+  def close(): Unit = {
+    client.close()
   }
+
+  def curatorClient(): CuratorFramework = client
 
   /**
     * Removes ephemeral nodes for self address that may exist when node restarts abnormally
@@ -161,11 +156,30 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
           }
       }
   }
+
+  def removeSeedEntry(): Unit = synchronized {
+    if (seedEntryAdded) {
+      ignoring(classOf[IllegalStateException]) {
+        latch.close()
+        seedEntryAdded = false
+      }
+    }
+  }
+
+  def createPathIfNeeded() {
+    Option(client.checkExists().forPath(path)).getOrElse {
+      try {
+        client.create().creatingParentsIfNeeded().forPath(path)
+      } catch {
+        case e: NodeExistsException => log.info("component=zookeeper-cluster-seed at=path-create-race-detected")
+      }
+    }
+  }
 }
 
-class ZookeeperClusterSeedSettings(system: ActorSystem) {
+class ZookeeperClusterSeedSettings(system: ActorSystem, configPath: String = "akka.cluster.seed.zookeeper") {
 
-  private val zc = system.settings.config.getConfig("akka.cluster.seed.zookeeper")
+  private val zc = system.settings.config.getConfig(configPath)
 
   val ZKUrl: String = if (zc.hasPath("exhibitor.url")) {
     val validate = zc.getBoolean("exhibitor.validate-certs")
@@ -186,6 +200,10 @@ class ZookeeperClusterSeedSettings(system: ActorSystem) {
 
   val port: Option[Int] = if (zc.hasPath("port_env_var"))
     Some(zc.getInt("port_env_var"))
+  else None
+
+  val protocol: Option[String] = if (zc.hasPath("protocol_env_var"))
+    Some(zc.getString("protocol_env_var"))
   else None
 
 }
