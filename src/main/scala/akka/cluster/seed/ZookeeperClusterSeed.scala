@@ -36,7 +36,7 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
   } else
     Cluster(system).selfAddress
 
-  private val client = new ZookeeperClient(settings, address, system.name, system.log)
+  private val client = new ZookeeperClient(settings, s"${address.protocol}://${address.hostPort}", system.name, system.log)
 
 
   /**
@@ -93,7 +93,7 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
 
 }
 
-class ZookeeperClient(settings: ZookeeperClusterSeedSettings, address: Address, actorSystemName: String, log: LoggingAdapter) {
+class ZookeeperClient(settings: ZookeeperClusterSeedSettings, latchId: String, actorSystemName: String, log: LoggingAdapter) {
 
   val retryPolicy = new ExponentialBackoffRetry(1000, 3)
   val connStr = settings.ZKUrl.replace("zk://", "")
@@ -110,7 +110,7 @@ class ZookeeperClient(settings: ZookeeperClusterSeedSettings, address: Address, 
 
   client.start()
 
-  val myId = s"${address.protocol}://${address.hostPort}"
+  val myId = latchId
 
   val path = s"${settings.ZKPath}/${actorSystemName}"
 
@@ -122,6 +122,7 @@ class ZookeeperClient(settings: ZookeeperClusterSeedSettings, address: Address, 
   def start(): Unit = latch.start()
 
   def close(): Unit = {
+    latch.close()
     client.close()
   }
 
