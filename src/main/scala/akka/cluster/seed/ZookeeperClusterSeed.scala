@@ -122,8 +122,10 @@ class ZookeeperClient(settings: ZookeeperClusterSeedSettings, latchId: String, a
   def start(): Unit = latch.start()
 
   def close(): Unit = {
-    latch.close()
-    client.close()
+    ignoring(classOf[IllegalStateException]) {
+      latch.close()
+      client.close()
+    }
   }
 
   def curatorClient(): CuratorFramework = client
@@ -201,10 +203,6 @@ class ZookeeperClusterSeedSettings(system: ActorSystem, configPath: String = "ak
 
   val port: Option[Int] = if (zc.hasPath("port_env_var"))
     Some(zc.getInt("port_env_var"))
-  else None
-
-  val protocol: Option[String] = if (zc.hasPath("protocol_env_var"))
-    Some(zc.getString("protocol_env_var"))
   else None
 
 }
