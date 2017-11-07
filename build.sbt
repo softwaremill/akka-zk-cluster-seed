@@ -3,10 +3,16 @@ import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.MultiJvm
 
 organization := "com.sclasen"
 name := "akka-zk-cluster-seed"
-version := "0.1.10-SNAPSHOT"
+version := "0.1.10-sml.1"
 
 scalaVersion := "2.11.8"
 crossScalaVersions := Seq(scalaVersion.value, "2.12.1")
+
+bintrayOrganization := Some("softwaremill")
+bintrayRepository := "softwaremill"
+
+licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0.html"))
+
 
 val akkaVersion = "2.4.18"
 val akkaHttpVersion = "10.0.6"
@@ -75,12 +81,12 @@ lazy val rootProject = (project in file(".")).
         </developer>
       </developers>),
 
-    publishTo := {
-      val v = version.value
-      val nexus = "https://oss.sonatype.org/"
-      if (v.trim.endsWith("SNAPSHOT")) Some("snapshots" at nexus + "content/repositories/snapshots")
-      else Some("releases" at nexus + "service/local/staging/deploy/maven2")
-    }
+//    publishTo := {
+//      val v = version.value
+//      val nexus = "https://oss.sonatype.org/"
+//      if (v.trim.endsWith("SNAPSHOT")) Some("snapshots" at nexus + "content/repositories/snapshots")
+//      else Some("releases" at nexus + "service/local/staging/deploy/maven2")
+//    }
   ).
   settings(Defaults.itSettings:_*).
   settings(SbtMultiJvm.multiJvmSettings:_*).

@@ -10,4 +10,6 @@ addSbtPlugin("net.virtual-void" % "sbt-dependency-graph" % "0.8.0")
 
 addSbtPlugin("com.typesafe.sbt" % "sbt-multi-jvm" % "0.3.8")
 
+addSbtPlugin("org.foundweekends" % "sbt-bintray" % "0.5.1")
+
 
