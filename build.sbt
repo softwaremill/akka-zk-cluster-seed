@@ -79,7 +79,7 @@ lazy val rootProject = (project in file(".")).
           <name>Scott Clasen</name>
           <url>http://github.com/sclasen</url>
         </developer>
-      </developers>),
+      </developers>)//,
 
 //    publishTo := {
 //      val v = version.value
